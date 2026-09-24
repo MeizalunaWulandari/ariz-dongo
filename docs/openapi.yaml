@@ -1,0 +1,540 @@
+openapi: 3.0.3
+
+info:
+  title: ARIZ DONGO API
+  description: |
+    API gateway untuk mengambil data Fieldsa tanpa mengekspos
+    credential maupun token Fieldsa kepada client.
+
+    Client seperti Flutter hanya berkomunikasi dengan ARIZ DONGO.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3000
+    description: Local Development
+
+tags:
+  - name: Health
+    description: API health check
+  - name: Work Order
+    description: Work Order data
+  - name: Photos
+    description: Work Order documents/photos
+  - name: Search
+    description: Search Work Order berdasarkan Circuit ID
+
+paths:
+
+  /api/v1/health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                success: true
+                message: "API is running"
+
+  /api/v1/data:
+    get:
+      tags:
+        - Work Order
+      summary: Get work order list
+      description: |
+        Mengambil daftar Work Order dari Fieldsa.
+
+        Parameter dapat dikosongkan. Jika kosong, backend menggunakan:
+        - date: hari ini pukul 00:00:00
+        - pagination: MSwyLDMsNSw2LDc=
+        - region: KALIMANTAN
+      operationId: getWorkOrderList
+
+      parameters:
+
+        - name: date
+          in: query
+          required: false
+          description: Tanggal request Fieldsa.
+          schema:
+            type: string
+            example: "2026-09-23T00:00:00"
+
+        - name: pagination
+          in: query
+          required: false
+          description: Pagination Fieldsa.
+          schema:
+            type: string
+            example: "MSwyLDMsNSw2LDc="
+
+        - name: region
+          in: query
+          required: false
+          description: Region Fieldsa.
+          schema:
+            type: string
+            example: "KALIMANTAN"
+
+      responses:
+
+        "200":
+          description: Work order list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkOrder"
+
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /api/v1/data/{workOrderNumber}:
+    get:
+      tags:
+        - Work Order
+      summary: Get work order detail
+      description: |
+        Mengambil detail teknis Work Order.
+
+        Endpoint ini menggabungkan beberapa sumber data Fieldsa:
+        - Work Order Detail
+        - Equipment
+        - Material
+        - Provisioning
+        - Technical Data
+        - Timeline
+
+        Data optional seperti equipment, material, provisioning,
+        technical data, dan timeline tidak menyebabkan request gagal
+        apabila data tersebut tidak tersedia.
+      operationId: getWorkOrderDetail
+
+      parameters:
+
+        - name: workOrderNumber
+          in: path
+          required: true
+          description: Nomor Work Order.
+          schema:
+            type: string
+            example: "WO26092300320"
+
+      responses:
+
+        "200":
+          description: Work order detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrderDetailResponse"
+
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /api/v1/data/photos/{workOrderNumber}:
+    get:
+      tags:
+        - Photos
+      summary: Get work order photos
+      description: |
+        Mengambil daftar document/photo Work Order.
+
+        Endpoint photo dipisahkan dari detail Work Order
+        agar request detail tidak menjadi terlalu berat.
+      operationId: getWorkOrderPhotos
+
+      parameters:
+
+        - name: workOrderNumber
+          in: path
+          required: true
+          description: Nomor Work Order.
+          schema:
+            type: string
+            example: "WO26092300412"
+
+      responses:
+
+        "200":
+          description: Work order photos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoResponse"
+
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /api/v1/search/{circuitId}:
+    get:
+      tags:
+        - Search
+      summary: Search work order by Circuit ID
+      description: |
+        Mencari Work Order berdasarkan Circuit ID.
+
+        ARIZ DONGO membaca tahun dan bulan dari Circuit ID.
+        Contoh:
+
+        CRT2510014054
+        - 25 = tahun 2025
+        - 10 = bulan Oktober
+
+        Kemudian backend mencari data pada setiap tanggal
+        dari tanggal 1 sampai akhir bulan secara concurrent.
+
+        Setelah Circuit ID ditemukan, backend mendapatkan
+        Work Order Number dan mengambil detail Work Order.
+
+        Response endpoint ini memiliki struktur yang sama
+        dengan endpoint:
+
+        GET /api/v1/data/{workOrderNumber}
+
+        Prioritas pencarian timeline:
+        1. Provisioning In Progress
+        2. On Progress
+      operationId: searchWorkOrder
+
+      parameters:
+        - name: circuitId
+          in: path
+          required: true
+          description: |
+            Circuit ID yang ingin dicari.
+
+            Format:
+            CRTYYMMxxxxxx
+
+            YY = tahun
+            MM = bulan
+          schema:
+            type: string
+            example: "CRT2609014054"
+
+      responses:
+
+        "200":
+          description: Work Order ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkOrderDetailResponse"
+
+        "502":
+          description: Work Order tidak ditemukan atau terjadi error upstream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+
+components:
+
+  schemas:
+
+    HealthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "API is running"
+
+
+    WorkOrder:
+      type: object
+      description: Work Order dari Fieldsa.
+
+
+    WorkOrderDetailResponse:
+      type: object
+      properties:
+
+        success:
+          type: boolean
+          example: true
+
+        data:
+          $ref: "#/components/schemas/WorkOrderDetail"
+
+
+    WorkOrderDetail:
+      type: object
+      properties:
+
+        workOrderNumber:
+          type: string
+          example: "WO26092300320"
+
+        referenceCode:
+          type: string
+          example: "CRT26092300123"
+
+        customerName:
+          type: string
+          example: "CUSTOMER NAME"
+
+        circuitId:
+          type: string
+          example: "CIRCUIT123"
+
+        cid:
+          type: string
+          example: "41013925"
+
+        endCustomerName:
+          type: string
+          example: "CUSTOMER NAME"
+
+        endCustomerAddress:
+          type: string
+          example: "Jl. Contoh No. 10"
+
+        endCustomerLongtitude:
+          type: string
+          example: "114.7859539"
+
+        homepassIdCoordinate:
+          type: string
+          example: "-3.4695031,114.7859539"
+
+        deviceAllocation:
+          type: string
+          example: "ONT"
+
+        workOrderStatusItem:
+          type: string
+          example: "Provisioning In Progress"
+
+        vendorName:
+          type: string
+          example: "VENDOR"
+
+        technicianName:
+          type: string
+          example: "mr.izky"
+
+        equipment:
+          type: array
+          items:
+            $ref: "#/components/schemas/Equipment"
+
+        material:
+          type: array
+          items:
+            $ref: "#/components/schemas/Material"
+
+        provisioning:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Provisioning"
+
+        technicalData:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/TechnicalData"
+
+        timeline:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Timeline"
+
+
+    Equipment:
+      type: object
+      properties:
+
+        description:
+          type: string
+          example: "ONT ZTE ZXHN ZTE F679D"
+
+        serialNumber:
+          type: string
+          example: "ZTEGDD0DADD7"
+
+        materialStatus:
+          type: string
+          example: "New"
+
+        materialCondition:
+          type: string
+          example: "Normal"
+
+
+    Material:
+      type: object
+      properties:
+
+        description:
+          type: string
+          example: "KABEL PRECON UPC - 200 METER"
+
+        materialStatus:
+          type: string
+          example: "New"
+
+        materialCondition:
+          type: string
+          example: "Normal"
+
+
+    Provisioning:
+      type: object
+      properties:
+
+        serialNumber:
+          type: string
+          example: "ZTEGDD0DD36"
+
+        equipmentModel:
+          type: string
+          example: "F679D"
+
+        networkEntityId:
+          type: string
+          example: "KS-BJB-04-LT4-LULIN"
+
+        epon:
+          type: string
+          example: "1/2/4:8"
+
+        vlan:
+          type: string
+          example: "2156"
+
+        receivedPower:
+          type: string
+          example: "-23.280"
+
+
+    TechnicalData:
+      type: object
+      properties:
+
+        siteId:
+          type: string
+          example: "BJB-04"
+
+        splitterId:
+          type: string
+          example: "BJB-04-D1641-M217S7"
+
+        totalPort:
+          type: string
+          example: "8"
+
+        portNumber:
+          type: string
+          example: "2"
+
+        availablePort:
+          type: string
+          example: "6"
+
+        dpfoCoordinate:
+          type: string
+          example: "-3.468394,114.786631"
+
+
+    Timeline:
+      type: object
+      description: |
+        Koordinat aktivitas teknisi dari timeline Fieldsa.
+
+        Backend mencari status group:
+        1. Provisioning In Progress
+        2. Jika tidak ditemukan, On Progress
+
+        Hanya record pertama yang sesuai yang digunakan.
+      properties:
+
+        actionLatitude:
+          type: string
+          example: "-3.4695031"
+
+        actionLongtitude:
+          type: string
+          example: "114.7859539"
+
+        latitudeLongtitudeLink:
+          type: string
+          format: uri
+          example: "https://maps.google.com/?q=-3.4695031,114.7859539"
+
+
+    PhotoResponse:
+      type: object
+      properties:
+
+        success:
+          type: boolean
+          example: true
+
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Photo"
+
+
+    Photo:
+      type: object
+      properties:
+
+        workOrderNumber:
+          type: string
+          example: "WO26092300412"
+
+        documentTypeName:
+          type: string
+          example: "Lokasi Instalasi"
+
+        documentFullPath:
+          type: string
+          format: uri
+          example: "https://example.com/photo.jpg"
+
+        created:
+          type: string
+          example: "2026-09-23T12:43:26.573"
+
+        createdBy:
+          type: string
+          example: "mr.izky"
+
+        documentTypeId:
+          type: integer
+          example: 6
+
+
+    ErrorResponse:
+      type: object
+      properties:
+
+        success:
+          type: boolean
+          example: false
+
+        message:
+          type: string
+          example: "get work order detail: Fieldsa request failed"
+
+
+  responses:
+
+    BadGateway:
+      description: Fieldsa upstream error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
